@@ -9,15 +9,37 @@ import "../interfaces/lido/IstETH.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "./SafEthStorage.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "./SafEthStorage.sol";
 
-/// @title Contract that mints/burns and provides owner functions for safETH
-/// @author Asymmetry Finance
-contract SafEth is
-    Initializable,
-    ERC20Upgradeable,
-    OwnableUpgradeable,
-    SafEthStorage
-{
+contract MyToken is Initializable, ERC20Upgradeable, OwnableUpgradeable, SafEthStorage {
+    uint256 private constant MAX_SUPPLY = 1000000000 * 10**18;
+
+    function initialize(string memory name_, string memory symbol_) external initializer {
+        __ERC20_init(name_, symbol_);
+        __Ownable_init();
+        __SafEthStorage_init();
+        _mint(msg.sender, MAX_SUPPLY);
+    }
+
+    function transfer(address recipient, uint256 amount) public override returns (bool) {
+        require(recipient != address(this), "ERC20: transfer to the token contract address");
+        _transfer(_msgSender(), recipient, amount);
+        return true;
+    }
+
+    function transferFrom(address sender, address recipient, uint256 amount) public override returns (bool) {
+        require(recipient != address(this), "ERC20: transfer to the token contract address");
+        _transfer(sender, recipient, amount);
+        uint256 currentAllowance = allowance(sender, _msgSender());
+        require(currentAllowance >= amount, "ERC20: transfer amount exceeds allowance");
+        _approve(sender, _msgSender(), currentAllowance - amount);
+        return true;
+    }
+}
+
     event ChangeMinAmount(uint256 indexed minAmount);
     event ChangeMaxAmount(uint256 indexed maxAmount);
     event StakingPaused(bool indexed paused);
@@ -33,27 +55,30 @@ contract SafEth is
     );
     event Rebalanced();
 
-    // As recommended by https://docs.openzeppelin.com/upgrades-plugins/1.x/writing-upgradeable
-    /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
-        _disableInitializers();
+        constructor() ERC20Upgradeable() OwnableUpgradeable() {
+        // Initialize contract state variables here
     }
 
+
     /**
-        @notice - Function to initialize values for the contracts
-        @dev - This replaces the constructor for upgradeable contracts
-        @param _tokenName - name of erc20
-        @param _tokenSymbol - symbol of erc20
-    */
-    function initialize(
-        string memory _tokenName,
-        string memory _tokenSymbol
-    ) external initializer {
-        ERC20Upgradeable.__ERC20_init(_tokenName, _tokenSymbol);
-        _transferOwnership(msg.sender);
-        minAmount = 5 * 10 ** 17; // initializing with .5 ETH as minimum
-        maxAmount = 200 * 10 ** 18; // initializing with 200 ETH as maximum
-    }
+    * @notice Function to initialize values for the contract
+    * @param _tokenName Name of the ERC20 token
+    * @param _tokenSymbol Symbol of the ERC20 token
+ */
+function initialize(
+    string memory _tokenName,
+    string memory _tokenSymbol
+) external initializer onlyOwner {
+    require(bytes(_tokenName).length > 0, "Token name cannot be empty");
+    require(bytes(_tokenSymbol).length > 0, "Token symbol cannot be empty");
+
+    ERC20Upgradeable.__ERC20_init(_tokenName, _tokenSymbol);
+    minAmount = 5e17; // initializing with .5 ETH as minimum
+    maxAmount = 2e20; // initializing with 200 ETH as maximum
+
+    // Check for integer overflow when calculating minAmount and maxAmount
+    require(minAmount < maxAmount, "minAmount must be less than maxAmount");
+}
 
     /**
         @notice - Stake your ETH into safETH
@@ -67,12 +92,20 @@ contract SafEth is
 
         uint256 underlyingValue = 0;
 
+                // Define a fixed-point precision value
+        uint256 constant FIXED_POINT_PRECISION = 10 ** 18;
+
         // Getting underlying value in terms of ETH for each derivative
-        for (uint i = 0; i < derivativeCount; i++)
-            underlyingValue +=
-                (derivatives[i].ethPerDerivative(derivatives[i].balance()) *
-                    derivatives[i].balance()) /
-                10 ** 18;
+        require(derivativeCount <= 100, "Too many derivatives");
+        uint256 underlyingValue = 0;
+        for (uint256 i = 0; i < derivativeCount; i++) {
+            uint256 ethPerDerivative = derivatives[i].ethPerDerivative(derivatives[i].balance());
+            uint256 balance = derivatives[i].balance();
+            // Use safe math functions to perform multiplication and division
+            uint256 derivativeValue = SafeMath.mul(ethPerDerivative, balance) / FIXED_POINT_PRECISION;
+            underlyingValue = SafeMath.add(underlyingValue, derivativeValue);
+        }
+
 
         uint256 totalSupply = totalSupply();
         uint256 preDepositPrice; // Price of safETH in regards to ETH
